@@ -1,11 +1,17 @@
-import csv
 import os
-import random
-import threading
-import multiprocessing
+# import random
+# import threading
+# import multiprocessing
 import numpy as np
 import pandas as pd
-import tqdm
+from tqdm import tqdm
+# from functools import partial
+# from threading import Thread
+
+# import time
+
+# from pandarallel import pandarallel
+# pandarallel.initialize(progress_bar=True)
 
 import networkx as nx
 
@@ -29,7 +35,8 @@ class FeatureExtractor:
         if data.shape[1] > 2:
             raise ValueError
 
-        data = data.rename(columns=data.iloc[0].astype(int)).drop(data.index[0]).reset_index(drop=True)
+        data = data.rename(columns=data.iloc[0].astype(int))\
+                .drop(data.index[0]).reset_index(drop=True)
 
         if not os.path.isdir(self.temp_path):
             os.makedirs(self.temp_path)
@@ -51,32 +58,72 @@ class FeatureExtractor:
                 create_using=nx.Graph()
                 )
 
+    # def apply_parallel(self, data, fun):
+    #     total_res = []
+
+    #     def partial(data):
+    #         try:
+    #             if data.shape[1] == 2:
+    #                 result = data.apply(lambda x: fun(x['source'], x['destination']), axis=1)
+    #                 total_res.extend(list(result))
+
+    #         except IndexError:
+    #             result = data.apply(fun)
+    #             total_res.extend(list(result))
+
+    #     threads = []
+    #     for k in range(4):
+    #         data_frac = len(data)//4
+    #         if k == 4 - 1:
+    #             arg = [data[data_frac*k : len(data)]]
+    #         else:
+    #             arg = [data[data_frac*k : data_frac*(k+1)]]
+
+    #         t = Thread(target=partial, args= arg)
+
+    #         t.start()
+    #         threads.append(t)
+
+    #     for thread in threads:
+    #         thread.join()
+
+    #     return total_res
 
     def transform(self, X):
-        X['source'] = X['source'].astype(str)
-        X['destination'] = X['destination'].astype(str)
+        X = X.astype(str)
 
-        X['num_successors_source'] = X.apply(lambda row: self.num_successors((row['source'])),axis=1)
-        X['num_predecessors_source'] = X.apply(lambda row: self.num_predecessors(row['source']),axis=1)
-        X['num_successors_destination'] = X.apply(lambda row: self.num_successors(row['destination']),axis=1)
-        X['num_predecessors_destination'] = X.apply(lambda row: self.num_predecessors(row['destination']),axis=1)                                     
+        tqdm.pandas(desc='creating num_successors_source column')
+        # X['num_successors_source'] = self.apply_parallel(X['source'], self.num_successors)
+        X['num_successors_source'] = X.progress_apply(lambda row: self.num_successors(row['source']), axis=1)
+        tqdm.pandas(desc='creating num_predecessors_source column')
+        X['num_predecessors_source'] = X.progress_apply(lambda row: self.num_predecessors(row['source']),axis=1)
+        tqdm.pandas(desc='creating num_successors_destination column')
+        X['num_successors_destination'] = X.progress_apply(lambda row: self.num_successors(row['destination']),axis=1)
+        tqdm.pandas(desc='creating num_predecessors_destination column')
+        X['num_predecessors_destination'] = X.progress_apply(lambda row: self.num_predecessors(row['destination']),axis=1)                                     
         # data['follows'] = data.apply(lambda row: self.follows(row['source'],row['destination']),axis=1)
-        X['back_link'] = X.apply(lambda row: self.back_link(row['source'],row['destination']),axis=1)
+        tqdm.pandas(desc='creating back_link column')
+        X['back_link'] = X.progress_apply(lambda row: self.back_link(row['source'], row['destination']),axis=1)
 
-        X['jaccard_successors'] = X.apply(lambda row: self.\
+        tqdm.pandas(desc='creating jaccard_successors column')
+        X['jaccard_successors'] = X.progress_apply(lambda row: self.\
             jaccard_successors(row['source'],row['destination']),axis=1)
 
-        X['jaccard_predecessors'] = X.apply(lambda row: self.\
+        tqdm.pandas(desc='creating jaccard_predecessors column')
+        X['jaccard_predecessors'] = X.progress_apply(lambda row: self.\
             jaccard_predecessors(row['source'],row['destination']),axis=1)
 
-        return X
+        return X.astype(int)
 
     def jaccard_successors(self,x,y):
         try:
-            if len(set(self.graph.successors(x))) == 0 | len(set(self.graph.successors(y))) == 0:
+            x_successors = set(self.graph.successors(x))
+            y_successors = set(self.graph.successors(y))
+
+            if len(x_successors) == 0 | len(y_successors) == 0:
                 return 0
-            sim = (len(set(self.graph.successors(x)).intersection(set(self.graph.successors(y)))))\
-            /(len(set(self.graph.successors(x)).union(set(self.graph.successors(y)))))
+            sim = (len(x_successors.intersection(y_successors)))\
+                    /(len(x_successors.union(y_successors)))
             return sim
         except:
             return 0
@@ -84,10 +131,13 @@ class FeatureExtractor:
 
     def jaccard_predecessors(self,x,y):
         try:
-            if len(set(self.graph.predecessors(x))) == 0 | len(set(self.graph.predecessors(y))) == 0:
+            x_predecessors = set(self.graph.predecessors(x))
+            y_predecessors = set(self.graph.predecessors(y))
+
+            if len(x_predecessors) == 0 | len(y_predecessors) == 0:
                 return 0
-            sim = (len(set(self.graph.predecessors(x)).intersection(set(self.graph.predecessors(y)))))\
-            /(len(set(self.graph.predecessors(x)).union(set(self.graph.predecessors(y)))))
+            sim = (len(x_predecessors.intersection(y_predecessors)))\
+                /(len(x_predecessors.union(y_predecessors)))
             return sim
 
         except:
@@ -95,18 +145,20 @@ class FeatureExtractor:
 
     def num_successors(self,x):
         try:
-            if len(set(self.graph.successors(x))) == 0:
+            successors = len(set(self.graph.successors(x)))
+            if successors == 0:
                 return 0
-            return len(set(self.graph.successors(x)))
+            return successors
         except:
             return 0
 
 
     def num_predecessors(self,x):
         try:
-            if len(set(self.graph.predecessors(x))) == 0:
+            predecessors = len(set(self.graph.predecessors(x)))
+            if predecessors == 0:
                 return 0
-            return len(set(self.graph.predecessors(x)))
+            return predecessors
         except:
             return 0
         
