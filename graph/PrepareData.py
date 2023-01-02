@@ -2,6 +2,7 @@ import csv
 import os
 import random
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import numpy as np
 import pandas as pd
@@ -111,9 +112,14 @@ class PrepareData:
 
         for k in range(self.n_jobs):
             data_frac = data_len//self.n_jobs
+            if k == self.n_jobs - 1:
+                arg = [data[data_frac*k : data_len]]
+            else:
+                arg = [data[data_frac*k : data_frac*(k+1)]]
+
             p = threading.Thread(
-                target=utility_func, 
-                args= [data[data_frac*k : data_frac*(k+1)]]
+                    target=utility_func, 
+                    args= arg
                 )
             
             p.start()
@@ -139,7 +145,6 @@ class PrepareData:
         y_test = pd.DataFrame(np.concatenate((y_test_pos, y_test_neg)).astype(int), columns=['label'])
 
         return X_train,X_test, y_train, y_test
-        # return df_pos, df_neg
 
 
                 
